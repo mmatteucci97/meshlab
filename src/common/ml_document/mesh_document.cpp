@@ -299,20 +299,27 @@ MeshModel* MeshDocument::addNewMesh(
 {
 	QString newlabel = nameDisambiguator(this->meshList, label);
 
+
 	if(!fullPath.isEmpty())
 	{
+
 		QFileInfo fi(fullPath);
+
 		fullPath = fi.absoluteFilePath();
+
 	}
 
 	meshList.push_back(MeshModel(newMeshId(), fullPath,newlabel));
+
 	MeshModel& newMesh = meshList.back();
 
 	if(setAsCurrent)
 		this->setCurrentMesh(newMesh.id());
 
 	emit meshSetChanged();
+
 	emit meshAdded(newMesh.id());
+
 	return &newMesh;
 }
 

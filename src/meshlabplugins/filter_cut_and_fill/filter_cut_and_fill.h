@@ -40,6 +40,7 @@ add sampleplugins
 #define FILTER_CUT_AND_FILL_PLUGIN_H
 
 #include <common/plugins/interfaces/filter_plugin.h>
+#include <string>
 
 class FilterCutAndFillPlugin : public QObject, public FilterPlugin
 {
@@ -78,6 +79,7 @@ public:
     int getRequirements(const QAction *filter) const;
 
     static float DetermineAverageEdgeLength(const MeshModel &mesh);
+    std::set<std::pair<CMeshO *, const char *>> SliceMesh(MeshModel &m, Plane3m slicingPlane, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh);
 
     FilterArity filterArity(const QAction*) const {return SINGLE_MESH;}
 

@@ -39,6 +39,9 @@
 #include <vcg/space/fitting3.h>
 #include <wrap/gl/glu_tessellator_cap.h>
 
+#include <array>
+#include <map>
+
 using namespace std;
 using namespace vcg;
 using namespace vcg::tri;
@@ -226,6 +229,8 @@ RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *actio
     parlst.addParam(RichBool("createOverMesh", true, "Create also over mesh", "If selected, it will create another layer with the portion of the mesh over the section plane. It requires manifoldness of the mesh "));
     parlst.addParam(RichBool("createUnderMesh", true, "Create also under mesh", "If selected, it will create another layer with the portion of the mesh under the section plane. It requires manifoldness of the mesh "));
 
+    parlst.addParam(RichBool("allLayers", false, "Apply to all visible layers", "if selected, the filter will be applied to all visible mesh Layers."));
+
     switch(ID(action)) {
     case FP_CUT_AND_FILL :
     {
@@ -233,7 +238,6 @@ RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *actio
         break;
     case FP_CUT_FILL_AND_REMESH:
     {
-        maxVal = m.cm.bbox.Diag();
         averageLen = DetermineAverageEdgeLength(m);
 
         parlst.addParam(RichBool ("TargetLenFromAverageLen", true, "Calculate the remeshing maximum edge length from the average edge length of the original mesh"));
@@ -407,40 +411,12 @@ static void BoundaryExpand(CMeshO &m)
     }
 }
 
-
-/**
-* @brief The Real Core Function doing the actual mesh processing.
-* @param action
-* @param md: an object containing all the meshes and rasters of MeshLab
-* @param par: the set of parameters of each filter
-* @param cb: callback object to tell MeshLab the percentage of execution of the filter
-* @return true if the filter has been applied correctly, false otherwise
-*/
-std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QAction * filter, const RichParameterList & par, MeshDocument &md, unsigned int& /*postConditionMask*/, vcg::CallBackPos *cb)
+std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(MeshModel &m, Plane3m slicingPlane, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh)
 {
-    std::map<std::string, QVariant> outputValues;
-    MeshModel & m = *md.mm();
-    // the mesh has to return to its original position
-    if (m.cm.Tr != Matrix44m::Identity())
-        tri::UpdatePosition<CMeshO>::Matrix(m.cm, Inverse(m.cm.Tr), true);
-
-    // the mesh has to be correctly transformed
-    if (m.cm.Tr != Matrix44m::Identity())
-        tri::UpdatePosition<CMeshO>::Matrix(m.cm, m.cm.Tr, true);
-
-
-    Point3m planeAxis(0,0,0);
-    Scalarm planeOffset;
-    Point3m planeCenter;
-    Plane3m slicingPlane;
-
-    Box3m bbox=m.cm.bbox;
     MeshModel* base=&m;
     MeshModel* orig=&m;
 
     // making up new layer name
-    QString sectionName = QFileInfo(base->shortName()).baseName() + "_section_surface";
-
     CMeshO sectionPolyline;
     CMeshO sectionSurface;
     CMeshO underM;
@@ -448,14 +424,6 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
     CMeshO underFM;
     CMeshO overFM;
 
-    //MeshModel* sectionPolyline= md.addNewMesh("",sectionName,true);
-    //MeshModel* sectionSurface= md.addNewMesh("",sectionName+"_filled");
-    //MeshModel* underM= md.addNewMesh("",sectionName+"_under");
-    //MeshModel* underFM= md.addNewMesh("",sectionName+"_under_filed");
-    //MeshModel* overM= md.addNewMesh("",sectionName+"_over");
-    //MeshModel* overFM= md.addNewMesh("",sectionName+"_over_filled");
-
-    SetMeshRequirements(m);
 
     SetMeshRequirements(sectionPolyline);
     SetMeshRequirements(sectionSurface);
@@ -469,32 +437,10 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
     tri::QualityMidPointFunctor<CMeshO> slicingfunc(0.0);
     tri::QualityEdgePredicate<CMeshO> slicingpred(0.0,0.0);
 
-    int ind;
-
-    ind = par.getEnum("planeAxis");
-    if(ind>=0 && ind<3)
-        planeAxis[ind] = 1.0f;
-    else
-        planeAxis=par.getPoint3m("customAxis");
-
-    planeAxis.Normalize();
-    planeOffset = par.getFloat("planeOffset");
 
     // Check if the mesh has the correct topology to perform the algorithm
     // TODO: check only if the mesh has boundary or if is it two-manifold only on the part of the mesh around the plane
     CheckMeshRequirement(base);
-
-    switch(RefPlane(par.getEnum("relativeTo")))
-    {
-        case REF_CENTER:  planeCenter = bbox.Center()+ planeAxis*planeOffset*(bbox.Diag()/2.0);      break;
-        case REF_MIN:     planeCenter = bbox.min+planeAxis*planeOffset*(bbox.Diag()/2.0);    break;
-        case REF_ORIG:    planeCenter = planeAxis*planeOffset;  break;
-    }
-
-
-
-    //planeCenter+=planeAxis*planeDist ;
-    slicingPlane.Init(planeCenter,planeAxis);
 
     tri::Append<CMeshO,CMeshO>::Mesh(underM,orig->cm);
     tri::UpdateQuality<CMeshO>::VertexFromPlane(underM, slicingPlane);
@@ -514,13 +460,7 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
     tri::UpdateBounding<CMeshO>::Box(sectionSurface);
     tri::UpdateNormal<CMeshO>::PerVertexNormalized(sectionSurface);
 
-    switch(ID(filter)) {
-        case FP_CUT_AND_FILL :
-        {
-
-        }
-        break;
-    case FP_CUT_FILL_AND_REMESH:
+    if(remesh)
     {
         CMeshO toProjectCopy;
 
@@ -584,10 +524,6 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
 
         tri::UpdateBounding<CMeshO>::Box(sectionSurface);
     }
-        break;
-    default :
-        wrongActionCalled(filter);
-    }
 
     //copy the selected faces of underMesh on overMesh
     tri::Append<CMeshO, CMeshO>::Mesh(overM, underM, true);
@@ -650,29 +586,128 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
     tri::UpdateSelection<CMeshO>::Clear(overM);
     tri::UpdateSelection<CMeshO>::Clear(overFM);
 
+    std::set<std::pair<CMeshO *, const char *>> retValues;
+
 
     if(par.getBool("createSectionSurface"))
     {
         // making up new layer name
-        QString sectionName = QFileInfo(base->shortName()).baseName() + "_section_surface";
-        MeshModel* sectionSurfaceModel= md.addNewMesh("",sectionName,true);
-        sectionSurfaceModel->cm = sectionSurface;
+        const char * sectionName = "_section_surface";
+        retValues.insert(std::make_pair(&sectionSurface, sectionName));
     }
 
     if(par.getBool("createUnderMesh"))
     {
         // making up new layer name
-        QString underMName = QFileInfo(base->shortName()).baseName() + "_under_part";
-        MeshModel* underMeshModel= md.addNewMesh("",underMName);
-        underMeshModel->cm = underFM;
+        const char * underMName = "_under_part";
+        retValues.insert(std::make_pair(&underFM, underMName));
     }
 
     if(par.getBool("createOverMesh"))
     {
         // making up new layer name
-        QString overMName = QFileInfo(base->shortName()).baseName() + "_under_part";
-        MeshModel* overMeshModel= md.addNewMesh("",overMName);
-        overMeshModel->cm = overFM;
+        const char * overMName = "_over_part";
+        retValues.insert(std::make_pair(&overFM, overMName));
+    }
+
+    for(auto mm : retValues)
+    {
+
+        cout << "func " << mm.second << " vertices: " << mm.first->VN() << endl;
+        cout << "func " << mm.second << " faces: " << mm.first->FN() << endl;
+
+    }
+
+    return retValues;
+}
+
+
+/**
+* @brief The Real Core Function doing the actual mesh processing.
+* @param action
+* @param md: an object containing all the meshes and rasters of MeshLab
+* @param par: the set of parameters of each filter
+* @param cb: callback object to tell MeshLab the percentage of execution of the filter
+* @return true if the filter has been applied correctly, false otherwise
+*/
+std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QAction * filter, const RichParameterList & par, MeshDocument &md, unsigned int& /*postConditionMask*/, vcg::CallBackPos *cb)
+{
+    std::map<std::string, QVariant> outputValues;
+    //CALCULATE THE PLANE USING THE SELECTED LAYER
+    MeshModel & m = *md.mm();
+    Box3m bbox=m.cm.bbox;
+    // the mesh has to return to its original position
+    if (m.cm.Tr != Matrix44m::Identity())
+        tri::UpdatePosition<CMeshO>::Matrix(m.cm, Inverse(m.cm.Tr), true);
+
+    // the mesh has to be correctly transformed
+    if (m.cm.Tr != Matrix44m::Identity())
+        tri::UpdatePosition<CMeshO>::Matrix(m.cm, m.cm.Tr, true);
+
+    SetMeshRequirements(m);
+
+    Point3m planeAxis(0,0,0);
+    Scalarm planeOffset;
+    Point3m planeCenter;
+    Plane3m slicingPlane;
+    int ind;
+
+    ind = par.getEnum("planeAxis");
+    if(ind>=0 && ind<3)
+        planeAxis[ind] = 1.0f;
+    else
+        planeAxis=par.getPoint3m("customAxis");
+
+    planeAxis.Normalize();
+    planeOffset = par.getFloat("planeOffset");
+
+    switch(RefPlane(par.getEnum("relativeTo")))
+    {
+        case REF_CENTER:  planeCenter = bbox.Center()+ planeAxis*planeOffset*(bbox.Diag()/2.0);      break;
+        case REF_MIN:     planeCenter = bbox.min+planeAxis*planeOffset*(bbox.Diag()/2.0);    break;
+        case REF_ORIG:    planeCenter = planeAxis*planeOffset;  break;
+    }
+    slicingPlane.Init(planeCenter,planeAxis);
+
+    bool applyToAllVisibleLayers = par.getBool("allLayers");
+    int cnt=0;
+
+    bool remesh=false;
+    if(ID(filter) == FP_CUT_FILL_AND_REMESH)
+    {
+        remesh=true;
+    }
+
+    std::set<std::pair<CMeshO *, const char *>> newMeshes;
+
+    if(!applyToAllVisibleLayers)
+    {
+        newMeshes = SliceMesh(m, slicingPlane, par, cb, remesh);
+    }
+    else
+    {
+
+        MeshModel *mmp = NULL;
+        while((mmp = md.nextVisibleMesh()))
+        {
+            std::set<std::pair<CMeshO *, const char *>> ret = SliceMesh(*mmp, slicingPlane, par, cb, remesh);
+            newMeshes.insert(ret.begin(), ret.end());
+        }
+    }
+
+    if(!newMeshes.empty())
+    {
+        for(auto mm : newMeshes)
+        {
+            QString name = QFileInfo(m.shortName()).baseName() + mm.second;
+            MeshModel * mM = md.addNewMesh("", name);
+
+            CMeshO *model = mm.first;
+
+            cout << "main " << name.toStdString() << " vertices: " << model->VN() << endl;
+            cout << "main " << name.toStdString() << " faces: " << model->FN() << endl;
+
+        }
     }
 
     return std::map<std::string, QVariant>();
