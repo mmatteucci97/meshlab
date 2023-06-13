@@ -231,8 +231,6 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     MeshModel* base=&m;
     MeshModel* orig=&m;
 
-    cout << 1 << endl;
-
     // making up new layer name
     CMeshO sectionPolyline;
     CMeshO *sectionSurface = new CMeshO();
@@ -240,9 +238,6 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     CMeshO overM;
     CMeshO *underFM = new CMeshO();
     CMeshO *overFM = new CMeshO();
-
-    cout << 2 << endl;
-
 
     SetMeshRequirements(sectionPolyline);
     SetMeshRequirements(*sectionSurface);
@@ -253,29 +248,19 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     SetMeshRequirements(*underFM);
     SetMeshRequirements(*overFM);
 
-    cout << 3 << endl;
-
     tri::QualityMidPointFunctor<CMeshO> slicingfunc(0.0);
     tri::QualityEdgePredicate<CMeshO> slicingpred(0.0,0.0);
 
-    cout << 4 << endl;
-
-
     // Check if the mesh has the correct topology to perform the algorithm
     // TODO: check only if the mesh has boundary or if is it two-manifold only on the part of the mesh around the plane
-    CheckMeshRequirement(base);
-
-    cout << 5 << endl;
 
     tri::Append<CMeshO,CMeshO>::Mesh(underM,orig->cm);
     tri::UpdateQuality<CMeshO>::VertexFromPlane(underM, slicingPlane);
 
-    cout << 6 << endl;
+    CheckMeshRequirement(underM);
 
     tri::UpdateTopology<CMeshO>::FaceFace(underM);
     tri::RefineE<CMeshO, tri::QualityMidPointFunctor<CMeshO>, tri::QualityEdgePredicate<CMeshO> > (underM, slicingfunc, slicingpred, false);
-
-    cout << 7 << endl;
 
     tri::UpdateSelection<CMeshO>::VertexFromQualityRange(underM,0,std::numeric_limits<float>::max());
     tri::UpdateSelection<CMeshO>::FaceFromVertexStrict(underM);

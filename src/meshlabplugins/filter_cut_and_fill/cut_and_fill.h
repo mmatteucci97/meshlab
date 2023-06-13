@@ -56,15 +56,40 @@ float FilterCutAndFillPlugin::DetermineAverageEdgeLength(const MeshModel &mesh)
  * todo: check only the vertices and the faces marked with quality=0 after determining the items that will be cut
  * check if they are non manifold and if they are of border
 */
-void CheckMeshRequirement(MeshModel *m)
+void CheckMeshRequirement(CMeshO m)
 {
-    tri::UpdateTopology<CMeshO>::FaceFace(m->cm);
-    if (tri::Clean<CMeshO>::CountNonManifoldEdgeFF(m->cm)>0 || (tri::Clean<CMeshO>::CountNonManifoldVertexFF(m->cm,false) != 0))
+    tri::UpdateTopology<CMeshO>::FaceFace(m);
+
+    for(auto fi = m.face.begin(); fi!=m.face.end(); ++fi)
     {
-        cout << "not okay" << endl;
-        throw MLException("Mesh is not two manifold, cannot apply filter");
+        for(int i=0; i<3; i++)
+        {
+            CMeshO::VertexType *v0 = (*fi).V0(i);
+            CMeshO::VertexType *v1 = (*fi).V1(i);
+            CMeshO::VertexType *v2 = (*fi).V2(i);
+
+            if((v0->Q()==0 && v1->Q()==0) || (v1->Q()==0 && v2->Q()==0) || (v2->Q()==0 && v0->Q()==0))
+            {
+                if(face::IsBorder(*fi, i))
+                {
+                    cout << "index of the face on the border:" << fi->Index() << endl;
+                    fi->SetS();
+                    cout << "Mesh ha a border on the plane, cannot apply filter" << endl;
+                    throw MLException("Cannot apply filter");
+                }
+
+                else if(!face::IsManifold(*fi, i))
+                {
+                    cout << "index of the face non manifold:" << fi->Index() << endl;
+                    fi->SetS();
+                    cout << "Mesh is not two manifold on the plane, cannot apply filter" << endl;
+                    throw MLException("Cannot apply filter");
+                }
+            }
+        }
     }
-    cout << "okay" << endl;
+
+
 }
 
 void UpdateMesh(CMeshO &m)
