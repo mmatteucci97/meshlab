@@ -22,6 +22,7 @@
 ****************************************************************************/
 
 #include "filter_cut_and_fill.h"
+#include "cut_and_fill.h"
 
 #include <vcg/complex/algorithms/clean.h>
 #include <vcg/complex/algorithms/stat.h>
@@ -170,32 +171,6 @@ QString FilterCutAndFillPlugin::filterName(ActionIDType filterId) const
 	}
 }
 
-  float FilterCutAndFillPlugin::DetermineAverageEdgeLength(const MeshModel &mesh)
- {
-     CMeshO m = mesh.cm;
-     float averageEdgeLength = 0;
-     int count = 0;
-
-     for(auto fi = m.face.begin(); fi!=m.face.end(); ++fi)
-     {
-         for(int i=0; i<3; i++)
-         {
-             float dx = fi->P1(i).X() - fi->P0(i).X();
-             float dy = fi->P1(i).Y() - fi->P0(i).Y();
-             float dz = fi->P1(i).Z() - fi->P0(i).Z();
-
-             float dist = sqrt(dx*dx + dy*dy + dz*dz);
-             averageEdgeLength += dist;
-
-             count++;
-         }
-     }
-
-     averageEdgeLength /= count / 2;
-
-     return averageEdgeLength;
- }
-
 /**
 * @brief This function define the needed parameters for each filter. Return true if the filter has some parameters
 * it is called every time, so you can set the default value of parameters according to the mesh
@@ -250,167 +225,6 @@ RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *actio
     return parlst;
 }
 
-/*
- * todo: check only the vertices and the faces marked with quality=0 after determining the items that will be cut
- * check if they are non manifold and if they are of border
-*/
-void CheckMeshRequirement(MeshModel *m)
-{
-    if (tri::Clean<CMeshO>::CountNonManifoldEdgeFF(m->cm)>0 || (tri::Clean<CMeshO>::CountNonManifoldVertexFF(m->cm,false) != 0))
-    {
-        throw MLException("Mesh is not two manifold, cannot apply filter");
-    }
-}
-
-void UpdateMesh(CMeshO &m)
-{
-    tri::UpdateNormal<CMeshO>::PerVertexNormalized(m);
-    tri::UpdateTopology<CMeshO>::FaceFace(m);
-    tri::UpdateTopology<CMeshO>::VertexFace(m);
-    tri::UpdateBounding<CMeshO>::Box(m);
-}
-
-void SetMeshRequirements(CMeshO &m)
-{
-    tri::UpdateBounding<CMeshO>::Box(m);
-    tri::UpdateNormal<CMeshO>::PerVertexNormalized(m);
-
-    m.vert.EnableVFAdjacency();
-    m.face.EnableVFAdjacency();
-    tri::UpdateTopology<CMeshO>::VertexFace(m);
-
-    m.face.EnableFFAdjacency();
-    tri::UpdateTopology<CMeshO>::FaceFace(m);
-
-    m.face.EnableQuality();
-    m.vert.EnableQuality();
-
-    m.face.EnableMark();
-    m.vert.EnableMark();
-
-    m.vert.EnableNormal();
-    m.face.EnableWedgeTexCoord();
-}
-
-void SetMeshRequirements(MeshModel &m)
-{
-    m.updateBoxAndNormals();
-
-    m.updateDataMask
-            (
-                MeshModel::MM_VERTFACETOPO |
-                MeshModel::MM_FACEFACETOPO |
-                MeshModel::MM_FACEQUALITY |
-                MeshModel::MM_VERTQUALITY |
-                MeshModel::MM_FACEMARK |
-                MeshModel::MM_VERTMARK |
-                MeshModel::MM_VERTNORMAL |
-                MeshModel::MM_WEDGTEXCOORD |
-                MeshModel::MM_FACENUMBER |
-                MeshModel::MM_GEOMETRY_AND_TOPOLOGY_CHANGE
-            );
-    m.cm.face.EnableMark();
-}
-
-static void CreateSection(CMeshO &section, CMeshO &m)
-{
-    // Add in section all vertices with Q==0
-    int newVertices=0;
-    int newEdges=0;
-    for(auto vi=m.vert.begin(); vi!=m.vert.end(); ++vi)
-    {
-        if((*vi).Q() == 0)
-        {
-
-            CMeshO::VertexType newV = *tri::Allocator<CMeshO>::AddVertices(section, 1);
-            newV = *vi;
-            newVertices++;
-        }
-    }
-
-    // Add in section all edges composed by 2 vertices with Q==0
-    std::set<std::pair<CMeshO::VertexType *, CMeshO::VertexType *> > addedEdges;
-
-    for(auto fi = m.face.begin(); fi!=m.face.end(); ++fi)
-    {
-        if(!(*fi).IsD())
-        {
-            for(int j=0; j<3; j++)
-            {
-                CMeshO::VertexType *v0 = (*fi).V0(j);
-                CMeshO::VertexType *v1 = (*fi).V1(j);
-
-                if(v0->Q() == 0 && v1->Q()==0)
-                {
-                    if(addedEdges.find(std::make_pair(v0, v1)) == addedEdges.end() && addedEdges.find(std::make_pair(v1, v0)) == addedEdges.end())
-                    {
-                        CMeshO::EdgeType &newE = *vcg::tri::Allocator<CMeshO>::AddEdges(section, 1);
-                        newE.V(0) = v0;
-                        newE.V(1) = v1;
-                        addedEdges.insert(std::make_pair(v0, v1));
-                        newEdges++;
-                    }
-                }
-            }
-        }
-    }
-}
-
-static void FillMesh(CMeshO &outputMesh, CMeshO &section, CMeshO &inputMesh, bool flipSection=false)
-{
-    CMeshO sectionCopy;
-    tri::Append<CMeshO, CMeshO>::Mesh(sectionCopy, section);
-
-    if(flipSection)
-    {
-        tri::Clean<CMeshO>::FlipMesh(sectionCopy);
-    }
-
-    tri::Append<CMeshO, CMeshO>::Mesh(outputMesh, sectionCopy);
-    tri::Append<CMeshO, CMeshO>::Mesh(outputMesh, inputMesh);
-
-    tri::Clean<CMeshO>::RemoveDuplicateVertex(outputMesh);
-    tri::Clean<CMeshO>::RemoveDuplicateVertex(outputMesh);
-    tri::Clean<CMeshO>::RemoveDuplicateFace(outputMesh);
-    UpdateMesh(outputMesh);
-}
-
-static void BoundaryExpand(CMeshO &m)
-{
-    tri::UpdateSelection<CMeshO>::FaceAll(m);
-
-    std::vector<std::tuple<size_t, size_t, size_t>> newTrianglesVector;
-    std::vector<Point3f> newTriangleCoordinates;
-    int count = 0;
-
-    for(auto fi = m.face.begin(); fi!=m.face.end(); ++fi)
-    {
-        for(int i=0; i<3; i++)
-        {
-            if(face::IsBorder(*fi, i))
-            {
-                //AGGIUNGI UNA FACCIA PER OGNI EDGE DI BOUNDARY
-
-                newTrianglesVector.emplace_back(tri::Index(m, fi->V0(i)), tri::Index(m, fi->V1(i)), m.vert.size()+ newTriangleCoordinates.size());
-
-
-                newTriangleCoordinates.push_back(fi->P0(i) + (fi->P1(i) - fi->P2(i)));
-            }
-        }
-    }
-
-    //AGGIUNGI I TRIANGOLI A M
-    for(int i=0; i<newTriangleCoordinates.size(); i++)
-    {
-        tri::Allocator<CMeshO>::AddVertex(m, newTriangleCoordinates[i]);
-    }
-
-    for(int i=0; i<newTrianglesVector.size(); i++)
-    {
-        tri:Allocator<CMeshO>::AddFace(m, std::get<0>(newTrianglesVector[i]), std::get<2>(newTrianglesVector[i]), std::get<1>(newTrianglesVector[i]));
-    }
-}
-
 std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(MeshModel &m, Plane3m slicingPlane, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh)
 {
     MeshModel* base=&m;
@@ -418,21 +232,21 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
 
     // making up new layer name
     CMeshO sectionPolyline;
-    CMeshO sectionSurface;
+    CMeshO *sectionSurface = new CMeshO();
     CMeshO underM;
     CMeshO overM;
-    CMeshO underFM;
-    CMeshO overFM;
+    CMeshO *underFM = new CMeshO();
+    CMeshO *overFM = new CMeshO();
 
 
     SetMeshRequirements(sectionPolyline);
-    SetMeshRequirements(sectionSurface);
+    SetMeshRequirements(*sectionSurface);
 
     SetMeshRequirements(underM);
     SetMeshRequirements(overM);
 
-    SetMeshRequirements(underFM);
-    SetMeshRequirements(overFM);
+    SetMeshRequirements(*underFM);
+    SetMeshRequirements(*overFM);
 
     tri::QualityMidPointFunctor<CMeshO> slicingfunc(0.0);
     tri::QualityEdgePredicate<CMeshO> slicingpred(0.0,0.0);
@@ -456,9 +270,9 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     CreateSection(sectionPolyline, underM);
 
     // Calculate the section surface
-    tri::CapEdgeMesh(sectionPolyline, sectionSurface);
-    tri::UpdateBounding<CMeshO>::Box(sectionSurface);
-    tri::UpdateNormal<CMeshO>::PerVertexNormalized(sectionSurface);
+    tri::CapEdgeMesh(sectionPolyline, *sectionSurface);
+    tri::UpdateBounding<CMeshO>::Box(*sectionSurface);
+    tri::UpdateNormal<CMeshO>::PerVertexNormalized(*sectionSurface);
 
     if(remesh)
     {
@@ -492,9 +306,9 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
         params.projectFlag  = reprojectFlag;
         params.surfDistCheck= false;
 
-        BoundaryExpand(sectionSurface);
+        BoundaryExpand(*sectionSurface);
 
-        tri::Append<CMeshO, CMeshO>::Mesh(toProjectCopy, sectionSurface);
+        tri::Append<CMeshO, CMeshO>::Mesh(toProjectCopy, *sectionSurface);
 
         SetMeshRequirements(toProjectCopy);
 
@@ -502,27 +316,27 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
 
         try
         {
-            tri::IsotropicRemeshing<CMeshO>::Do(sectionSurface, toProjectCopy, params, cb);
+            tri::IsotropicRemeshing<CMeshO>::Do(*sectionSurface, toProjectCopy, params, cb);
         }
         catch(vcg::MissingPreconditionException& excp)
         {
             log(excp.what());
             throw MLException(excp.what());
         }
-        tri::UpdateSelection<CMeshO>::FaceInvert(sectionSurface);
+        tri::UpdateSelection<CMeshO>::FaceInvert(*sectionSurface);
 
-        for(auto fi = sectionSurface.face.begin(); fi!=sectionSurface.face.end(); ++fi)
+        for(auto fi = sectionSurface->face.begin(); fi!=sectionSurface->face.end(); ++fi)
         {
             if((*fi).IsS())
             {
-                tri::Allocator<CMeshO>::DeleteFace(sectionSurface, *fi);
+                tri::Allocator<CMeshO>::DeleteFace(*sectionSurface, *fi);
             }
         }
-        tri::Clean<CMeshO>::RemoveUnreferencedVertex(sectionSurface);
+        tri::Clean<CMeshO>::RemoveUnreferencedVertex(*sectionSurface);
 
-        tri::Allocator<CMeshO>::CompactEveryVector(sectionSurface);
+        tri::Allocator<CMeshO>::CompactEveryVector(*sectionSurface);
 
-        tri::UpdateBounding<CMeshO>::Box(sectionSurface);
+        tri::UpdateBounding<CMeshO>::Box(*sectionSurface);
     }
 
     //copy the selected faces of underMesh on overMesh
@@ -571,20 +385,20 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
         tri::UpdateNormal<CMeshO>::PerVertexAngleWeighted(overM);
     }
 
-    FillMesh(underFM, sectionSurface, underM);
-    FillMesh(overFM, sectionSurface, overM, true);
+    FillMesh(*underFM, *sectionSurface, underM);
+    FillMesh(*overFM, *sectionSurface, overM, true);
 
-    tri::UpdateBounding<CMeshO>::Box(underFM);
-    tri::UpdateNormal<CMeshO>::PerFaceNormalized(underFM);
+    tri::UpdateBounding<CMeshO>::Box(*underFM);
+    tri::UpdateNormal<CMeshO>::PerFaceNormalized(*underFM);
 
-    tri::UpdateBounding<CMeshO>::Box(overFM);
-    tri::UpdateNormal<CMeshO>::PerFaceNormalized(overFM);
+    tri::UpdateBounding<CMeshO>::Box(*overFM);
+    tri::UpdateNormal<CMeshO>::PerFaceNormalized(*overFM);
 
     tri::UpdateSelection<CMeshO>::Clear(underM);
-    tri::UpdateSelection<CMeshO>::Clear(underFM);
-    tri::UpdateSelection<CMeshO>::Clear(sectionSurface);
+    tri::UpdateSelection<CMeshO>::Clear(*underFM);
+    tri::UpdateSelection<CMeshO>::Clear(*sectionSurface);
     tri::UpdateSelection<CMeshO>::Clear(overM);
-    tri::UpdateSelection<CMeshO>::Clear(overFM);
+    tri::UpdateSelection<CMeshO>::Clear(*overFM);
 
     std::set<std::pair<CMeshO *, const char *>> retValues;
 
@@ -593,21 +407,21 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     {
         // making up new layer name
         const char * sectionName = "_section_surface";
-        retValues.insert(std::make_pair(&sectionSurface, sectionName));
+        retValues.insert(std::make_pair(sectionSurface, sectionName));
     }
 
     if(par.getBool("createUnderMesh"))
     {
         // making up new layer name
         const char * underMName = "_under_part";
-        retValues.insert(std::make_pair(&underFM, underMName));
+        retValues.insert(std::make_pair(underFM, underMName));
     }
 
     if(par.getBool("createOverMesh"))
     {
         // making up new layer name
         const char * overMName = "_over_part";
-        retValues.insert(std::make_pair(&overFM, overMName));
+        retValues.insert(std::make_pair(overFM, overMName));
     }
 
     for(auto mm : retValues)
@@ -686,12 +500,13 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
     }
     else
     {
-
-        MeshModel *mmp = NULL;
-        while((mmp = md.nextVisibleMesh()))
+        for(auto mmp = md.meshBegin(); mmp!=md.meshEnd(); ++mmp)
         {
-            std::set<std::pair<CMeshO *, const char *>> ret = SliceMesh(*mmp, slicingPlane, par, cb, remesh);
-            newMeshes.insert(ret.begin(), ret.end());
+            if(mmp->isVisible())
+            {
+                std::set<std::pair<CMeshO *, const char *>> ret = SliceMesh(*mmp, slicingPlane, par, cb, remesh);
+                newMeshes.insert(ret.begin(), ret.end());
+            }
         }
     }
 
@@ -707,6 +522,7 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
             cout << "main " << name.toStdString() << " vertices: " << model->VN() << endl;
             cout << "main " << name.toStdString() << " faces: " << model->FN() << endl;
 
+            mM->cm = *model;
         }
     }
 
