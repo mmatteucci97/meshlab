@@ -58,10 +58,13 @@ float FilterCutAndFillPlugin::DetermineAverageEdgeLength(const MeshModel &mesh)
 */
 void CheckMeshRequirement(MeshModel *m)
 {
+    tri::UpdateTopology<CMeshO>::FaceFace(m->cm);
     if (tri::Clean<CMeshO>::CountNonManifoldEdgeFF(m->cm)>0 || (tri::Clean<CMeshO>::CountNonManifoldVertexFF(m->cm,false) != 0))
     {
+        cout << "not okay" << endl;
         throw MLException("Mesh is not two manifold, cannot apply filter");
     }
+    cout << "okay" << endl;
 }
 
 void UpdateMesh(CMeshO &m)
@@ -177,9 +180,12 @@ static void FillMesh(CMeshO &outputMesh, CMeshO &section, CMeshO &inputMesh, boo
     UpdateMesh(outputMesh);
 }
 
-static void BoundaryExpand(CMeshO &m)
+void BoundaryExpand(CMeshO &m)
 {
     tri::UpdateSelection<CMeshO>::FaceAll(m);
+
+    cout << "m vertices begin: " << m.VN() << endl;
+    cout << "m faces begin: " << m.FN() << endl;
 
     std::vector<std::tuple<size_t, size_t, size_t>> newTrianglesVector;
     std::vector<Point3f> newTriangleCoordinates;
@@ -211,6 +217,9 @@ static void BoundaryExpand(CMeshO &m)
     {
         tri:Allocator<CMeshO>::AddFace(m, std::get<0>(newTrianglesVector[i]), std::get<2>(newTrianglesVector[i]), std::get<1>(newTrianglesVector[i]));
     }
+
+    cout << "m vertices end: " << m.VN() << endl;
+    cout << "m faces end: " << m.FN() << endl;
 }
 
 

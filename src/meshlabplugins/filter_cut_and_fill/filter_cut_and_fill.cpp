@@ -227,8 +227,11 @@ RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *actio
 
 std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(MeshModel &m, Plane3m slicingPlane, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh)
 {
+    cout << "Slicing " << m.shortName().toStdString() << ". VN=" << m.cm.VN() << "; FN=" << m.cm.FN() << endl;
     MeshModel* base=&m;
     MeshModel* orig=&m;
+
+    cout << 1 << endl;
 
     // making up new layer name
     CMeshO sectionPolyline;
@@ -237,6 +240,8 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     CMeshO overM;
     CMeshO *underFM = new CMeshO();
     CMeshO *overFM = new CMeshO();
+
+    cout << 2 << endl;
 
 
     SetMeshRequirements(sectionPolyline);
@@ -248,19 +253,29 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     SetMeshRequirements(*underFM);
     SetMeshRequirements(*overFM);
 
+    cout << 3 << endl;
+
     tri::QualityMidPointFunctor<CMeshO> slicingfunc(0.0);
     tri::QualityEdgePredicate<CMeshO> slicingpred(0.0,0.0);
+
+    cout << 4 << endl;
 
 
     // Check if the mesh has the correct topology to perform the algorithm
     // TODO: check only if the mesh has boundary or if is it two-manifold only on the part of the mesh around the plane
     CheckMeshRequirement(base);
 
+    cout << 5 << endl;
+
     tri::Append<CMeshO,CMeshO>::Mesh(underM,orig->cm);
     tri::UpdateQuality<CMeshO>::VertexFromPlane(underM, slicingPlane);
 
+    cout << 6 << endl;
+
     tri::UpdateTopology<CMeshO>::FaceFace(underM);
     tri::RefineE<CMeshO, tri::QualityMidPointFunctor<CMeshO>, tri::QualityEdgePredicate<CMeshO> > (underM, slicingfunc, slicingpred, false);
+
+    cout << 7 << endl;
 
     tri::UpdateSelection<CMeshO>::VertexFromQualityRange(underM,0,std::numeric_limits<float>::max());
     tri::UpdateSelection<CMeshO>::FaceFromVertexStrict(underM);
@@ -273,6 +288,7 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     tri::CapEdgeMesh(sectionPolyline, *sectionSurface);
     tri::UpdateBounding<CMeshO>::Box(*sectionSurface);
     tri::UpdateNormal<CMeshO>::PerVertexNormalized(*sectionSurface);
+    tri::UpdateTopology<CMeshO>::FaceFace(*sectionSurface);
 
     if(remesh)
     {
@@ -306,7 +322,13 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
         params.projectFlag  = reprojectFlag;
         params.surfDistCheck= false;
 
+        cout << "section surface vertices: " << sectionSurface->VN() << endl;
+        cout << "section surface faces: " << sectionSurface->FN() << endl;
+
         BoundaryExpand(*sectionSurface);
+
+        cout << "section surface vertices: " << sectionSurface->VN() << endl;
+        cout << "section surface faces: " << sectionSurface->FN() << endl;
 
         tri::Append<CMeshO, CMeshO>::Mesh(toProjectCopy, *sectionSurface);
 
@@ -427,8 +449,8 @@ std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(Me
     for(auto mm : retValues)
     {
 
-        cout << "func " << mm.second << " vertices: " << mm.first->VN() << endl;
-        cout << "func " << mm.second << " faces: " << mm.first->FN() << endl;
+        cout << "Sliced " << mm.second << " vertices: " << mm.first->VN() << endl;
+        cout << "Sliced " << mm.second << " faces: " << mm.first->FN() << endl;
 
     }
 
@@ -516,13 +538,9 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
         {
             QString name = QFileInfo(m.shortName()).baseName() + mm.second;
             MeshModel * mM = md.addNewMesh("", name);
+            mM->cm = *mm.first;
 
-            CMeshO *model = mm.first;
-
-            cout << "main " << name.toStdString() << " vertices: " << model->VN() << endl;
-            cout << "main " << name.toStdString() << " faces: " << model->FN() << endl;
-
-            mM->cm = *model;
+            cout << "created mesh " << mM->shortName().toStdString() << ". VN=" << mM->cm.VN() << "; FN=" << mM->cm.FN() << endl;
         }
     }
 
