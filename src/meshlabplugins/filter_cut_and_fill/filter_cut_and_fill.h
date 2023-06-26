@@ -79,24 +79,20 @@ public:
     int getRequirements(const QAction *filter) const;
 
     static float DetermineAverageEdgeLength(const MeshModel &mesh);
-    std::set<std::pair<CMeshO *, const char *>> SliceMesh(MeshModel &m, Plane3m slicingPlane, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh);
+    std::set<std::pair<CMeshO *, const char *>> SliceMesh(MeshModel &m,  Point3m planeNormal, Point3m planeCenter, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh);
 
     FilterArity filterArity(const QAction*) const {return SINGLE_MESH;}
 
 protected:
-
     int iterations = 10;
-    bool adaptive= true;
-    bool selectedOnly = true;
     float creaseAngle = 30;
 
+    bool adaptive= true;
     bool splitFlag = true;
     bool collapseFlag = true;
     bool swapFlag = true;
     bool smoothFlag = true;
     bool reprojectFlag = true;
-
-    Scalarm lastisor_FeatureDeg;
 };
 
 #endif

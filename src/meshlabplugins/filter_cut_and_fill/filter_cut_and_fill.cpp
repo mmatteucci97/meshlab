@@ -47,12 +47,10 @@ using namespace std;
 using namespace vcg;
 using namespace vcg::tri;
 
-/**
- * @brief Constructor usually performs only two simple tasks of filling the two lists
- *  - typeList: with all the possible id of the filtering actions
- *  - actionList with the corresponding actions. If you want to add icons to
- *  your filtering actions you can do here by construction the QActions accordingly
- */
+typedef vcg::tri::QualityEdgePredicate<CMeshO> EdgePredicate;
+typedef vcg::tri::QualityMidPointFunctor<CMeshO> MidPointFunctor;
+typedef vcg::tri::IsotropicRemeshing<CMeshO>::Params RemeshingParams;
+
 FilterCutAndFillPlugin::FilterCutAndFillPlugin()
 { 
     typeList = {
@@ -69,13 +67,6 @@ QString FilterCutAndFillPlugin::pluginName() const
     return "FilterCutAndFill";
 }
 
-/**
-* @brief The FilterClass describes in which generic class of filters it fits.
-* This choice affect the submenu in which each filter will be placed
-* More than a single class can be chosen.
-* @param a: the action of the filter
-* @return the class od the filter
-*/
 FilterCutAndFillPlugin::FilterClass FilterCutAndFillPlugin::getClass(const QAction *a) const
 {
     switch(ID(a))
@@ -89,10 +80,6 @@ FilterCutAndFillPlugin::FilterClass FilterCutAndFillPlugin::getClass(const QActi
     return FilterPlugin::Generic;
 }
 
-/**
- * @brief FilterSamplePlugin::getPreConditions
- * @return
- */
 int FilterCutAndFillPlugin::getPreConditions(const QAction *filter) const
 {
     switch(ID(filter))
@@ -114,12 +101,6 @@ int FilterCutAndFillPlugin::getRequirements(const QAction* filter) const
     }
 }
 
-/**
- * @brief FilterSamplePlugin::pythonFilterName if you want that your filter should have a different
- * name on pymeshlab, use this function to return its python name.
- * @param f
- * @return
- */
 QString FilterCutAndFillPlugin::pythonFilterName(ActionIDType f) const
 {
     switch(f) {
@@ -133,12 +114,6 @@ QString FilterCutAndFillPlugin::pythonFilterName(ActionIDType f) const
     }
 }
 
-/**
- * @brief ST() must return the very short string describing each filtering action
- * (this string is used also to define the menu entry)
- * @param filterId: the id of the filter
- * @return the name of the filter
- */
 QString FilterCutAndFillPlugin::filterName(ActionIDType filterId) const
 {
 	switch(filterId) {
@@ -152,13 +127,7 @@ QString FilterCutAndFillPlugin::filterName(ActionIDType filterId) const
 	}
 }
 
-/**
- * @brief // Info() must return the longer string describing each filtering action
- * (this string is used in the About plugin dialog)
- * @param filterId: the id of the filter
- * @return an info string of the filter
- */
- QString FilterCutAndFillPlugin::filterInfo(ActionIDType filterId) const
+QString FilterCutAndFillPlugin::filterInfo(ActionIDType filterId) const
 {
 	switch(filterId) {
     case FP_CUT_AND_FILL :
@@ -171,34 +140,17 @@ QString FilterCutAndFillPlugin::filterName(ActionIDType filterId) const
 	}
 }
 
-/**
-* @brief This function define the needed parameters for each filter. Return true if the filter has some parameters
-* it is called every time, so you can set the default value of parameters according to the mesh
-* For each parameter you need to define,
-* - the name of the parameter,
-* - the default value
-* - the string shown in the dialog
-* - a possibly long string describing the meaning of that parameter (shown as a popup help in the dialog)
-* @param action
-* @param m
-* @param parlst
-*/
 RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *action,const MeshModel &m)
 {
     RichParameterList parlst;
     float maxVal;
-    QStringList curvCalcMethods;
-    QStringList curvColorMethods;
-    QStringList loopWeightLst;
-    float averageLen;
-    float averageArea;
 
     QStringList axis = QStringList() <<"X Axis"<<"Y Axis"<<"Z Axis"<<"Custom Axis";
-    parlst.addParam(RichEnum   ("planeAxis", 1, axis, tr("Plane perpendicular to"), tr("The Slicing plane will be done perpendicular to the axis")));
+    parlst.addParam(RichEnum   ("planeAxis", 0, axis, tr("Plane perpendicular to"), tr("The Slicing plane will be done perpendicular to the axis")));
     parlst.addParam(RichDirection("customAxis",Point3f(0,1,0),"Custom axis","Specify a custom axis, this is only valid if the above parameter is set to Custom"));
 
     parlst.addParam(RichFloat  ("planeOffset", 0.0, "Cross plane offset", "Specify an offset of the cross-plane. The offset corresponds to the distance from the point specified in the plane reference parameter. By default (Cross plane offset == 0)"));
-    parlst.addParam(RichEnum   ("relativeTo",0,QStringList()<<"Bounding box center"<<"Bounding box min"<<"Origin","plane reference","Specify the reference from which the planes are shifted"));
+    parlst.addParam(RichEnum   ("relativeTo",2,QStringList()<<"Bounding box center"<<"Bounding box min"<<"Origin","plane reference","Specify the reference from which the planes are shifted"));
 
     parlst.addParam(RichBool("createSectionSurface",false,"Create also section surface","If selected, in addition to a layer with the section polyline, it will be created also a layer with a triangulated version of the section polyline. This only works if the section polyline is closed"));
     parlst.addParam(RichBool("createOverMesh", true, "Create also over mesh", "If selected, it will create another layer with the portion of the mesh over the section plane. It requires manifoldness of the mesh "));
@@ -213,10 +165,9 @@ RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *actio
         break;
     case FP_CUT_FILL_AND_REMESH:
     {
+        float averageLen;
         averageLen = DetermineAverageEdgeLength(m);
-
-        parlst.addParam(RichBool ("TargetLenFromAverageLen", true, "Calculate the remeshing maximum edge length from the average edge length of the original mesh"));
-        parlst.addParam(RichPercentage("TargetLenAverage", averageLen, 0.01*averageLen, averageLen, "Target Edge Len Average", "Use this value of the average edge length"));
+        parlst.addParam(RichPercentage("TargetLenAverage", averageLen, 0.01*averageLen, 100*averageLen, "Target Edge Len Average", "Use this value of the average edge length"));
     }
         break;
     default :
@@ -225,271 +176,203 @@ RichParameterList FilterCutAndFillPlugin::initParameterList(const QAction *actio
     return parlst;
 }
 
-std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(MeshModel &m, Plane3m slicingPlane, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh)
+int FilterCutAndFillPlugin::postCondition(const QAction *filter) const
 {
-    cout << "Slicing " << m.shortName().toStdString() << ". VN=" << m.cm.VN() << "; FN=" << m.cm.FN() << endl;
-    MeshModel* base=&m;
-    MeshModel* orig=&m;
+    switch(ID(filter))
+    {
+    case FP_CUT_AND_FILL: 	return MeshModel::MM_VERTCOORD | MeshModel::MM_FACENORMAL | MeshModel::MM_VERTNORMAL;
+    }
 
-    // making up new layer name
-    CMeshO sectionPolyline;
+    return MeshModel::MM_VERTCOORD | MeshModel::MM_FACENORMAL | MeshModel::MM_VERTNORMAL;
+}
+
+std::set<std::pair<CMeshO *, const char *>> FilterCutAndFillPlugin::SliceMesh(MeshModel &model, Point3m planeNormal, Point3m planeCenter, const RichParameterList &par, vcg::CallBackPos *cb, bool remesh)
+{
+    //------- parameters
+    CMeshO m = model.cm;
+
+    std::set<std::pair<CMeshO *, const char *>> retValues;
+
     CMeshO *sectionSurface = new CMeshO();
-    CMeshO underM;
-    CMeshO overM;
-    CMeshO *underFM = new CMeshO();
-    CMeshO *overFM = new CMeshO();
+    CMeshO *underMesh = new CMeshO();
+    CMeshO *overMesh = new CMeshO();
+    CMeshO section;
 
-    SetMeshRequirements(sectionPolyline);
+    MidPointFunctor slicingFunc(0.0);
+    EdgePredicate slicingPred(0.0, 0.0);
+
+    Plane3m slicingPlane;
+
+    //-----------------requirements
+    SetMeshRequirements(model);
+
+    SetMeshRequirements(m);
     SetMeshRequirements(*sectionSurface);
+    SetMeshRequirements(*underMesh);
+    SetMeshRequirements(*overMesh);
+    SetMeshRequirements(section);
 
-    SetMeshRequirements(underM);
-    SetMeshRequirements(overM);
+    //--------------
 
-    SetMeshRequirements(*underFM);
-    SetMeshRequirements(*overFM);
 
-    tri::QualityMidPointFunctor<CMeshO> slicingfunc(0.0);
-    tri::QualityEdgePredicate<CMeshO> slicingpred(0.0,0.0);
+    planeNormal.Normalize();
 
-    // Check if the mesh has the correct topology to perform the algorithm
-    // TODO: check only if the mesh has boundary or if is it two-manifold only on the part of the mesh around the plane
+    slicingPlane.Init(planeCenter, planeNormal);
 
-    tri::Append<CMeshO,CMeshO>::Mesh(underM,orig->cm);
-    tri::UpdateQuality<CMeshO>::VertexFromPlane(underM, slicingPlane);
+    tri::UpdateQuality<CMeshO>::VertexFromPlane(m, slicingPlane);
+    tri::UpdateTopology<CMeshO>::FaceFace(m);
+    tri::RefineE<CMeshO, MidPointFunctor, EdgePredicate>(m, slicingFunc, slicingPred);
 
-    CheckMeshRequirement(underM);
+    CheckMeshRequirement(m);
 
-    tri::UpdateTopology<CMeshO>::FaceFace(underM);
-    tri::RefineE<CMeshO, tri::QualityMidPointFunctor<CMeshO>, tri::QualityEdgePredicate<CMeshO> > (underM, slicingfunc, slicingpred, false);
+    CreateSection(section, m);
 
-    tri::UpdateSelection<CMeshO>::VertexFromQualityRange(underM,0,std::numeric_limits<float>::max());
-    tri::UpdateSelection<CMeshO>::FaceFromVertexStrict(underM);
+    CapEdgeMesh(section, *sectionSurface);
 
-    tri::UpdateSelection<CMeshO>::FaceInvert(underM);
+    UpdateNormal<CMeshO>::PerFaceNormalized(*sectionSurface);
+    UpdateNormal<CMeshO>::PerVertexAngleWeighted(*sectionSurface);
 
-    CreateSection(sectionPolyline, underM);
+    Point3f sectionAverageNormal = Point3f(0.0, 0.0, 0.0);
+    for(auto fi = sectionSurface->face.begin(); fi != sectionSurface->face.end(); ++fi)
+    {
+        if(fi->IsD()) continue;
+        sectionAverageNormal += fi->N();
+    }
+    sectionAverageNormal /= sectionSurface->FN();
 
-    // Calculate the section surface
-    tri::CapEdgeMesh(sectionPolyline, *sectionSurface);
-    tri::UpdateBounding<CMeshO>::Box(*sectionSurface);
-    tri::UpdateNormal<CMeshO>::PerVertexNormalized(*sectionSurface);
-    tri::UpdateTopology<CMeshO>::FaceFace(*sectionSurface);
+    if(sectionAverageNormal.dot(planeNormal) < 0.0)
+    {
+        tri::Clean<CMeshO>::FlipMesh(*sectionSurface);
+    }
 
     if(remesh)
     {
+        tri::IsotropicRemeshing<CMeshO>::Params remeshParams;
+        float averageEdgeLength;
         CMeshO toProjectCopy;
-
-        //Variables used to remesh the section surface
-        float maxVal;
-        float targetLen;
-
-        if(par.getBool("TargetLenFromAverageLen"))
-        {
-            targetLen = par.getAbsPerc("TargetLenAverage");
-        }
-        else
-        {
-            targetLen = par.getAbsPerc("TargetLen");
-        }
-
-        tri::IsotropicRemeshing<CMeshO>::Params params;
-
-        params.SetTargetLen(targetLen);
-        params.SetFeatureAngleDeg(creaseAngle);
-
-        params.iter         = iterations;
-        params.adapt        = adaptive;
-        params.selectedOnly = selectedOnly;
-        params.splitFlag    = splitFlag;
-        params.collapseFlag = collapseFlag;
-        params.swapFlag     = swapFlag;
-        params.smoothFlag   = smoothFlag;
-        params.projectFlag  = reprojectFlag;
-        params.surfDistCheck= false;
-
-        cout << "section surface vertices: " << sectionSurface->VN() << endl;
-        cout << "section surface faces: " << sectionSurface->FN() << endl;
-
-        BoundaryExpand(*sectionSurface);
-
-        cout << "section surface vertices: " << sectionSurface->VN() << endl;
-        cout << "section surface faces: " << sectionSurface->FN() << endl;
-
-        tri::Append<CMeshO, CMeshO>::Mesh(toProjectCopy, *sectionSurface);
 
         SetMeshRequirements(toProjectCopy);
 
-        toProjectCopy.face.EnableMark();
+        averageEdgeLength = par.getAbsPerc("TargetLenFromAverageLen");
+
+        remeshParams.SetTargetLen(averageEdgeLength);
+        remeshParams.SetFeatureAngleDeg(creaseAngle);
+        remeshParams.selectedOnly = true;
+        remeshParams.iter = iterations;
+        remeshParams.surfDistCheck = false;
+        remeshParams.adapt = true;
+        remeshParams.splitFlag = splitFlag;
+        remeshParams.smoothFlag = smoothFlag;
+        remeshParams.collapseFlag = collapseFlag;
+        remeshParams.swapFlag = swapFlag;
+        remeshParams.projectFlag = reprojectFlag;
+
+        BoundaryExpand(*sectionSurface);
+        tri::Append<CMeshO, CMeshO>::Mesh(toProjectCopy, *sectionSurface);
 
         try
         {
-            tri::IsotropicRemeshing<CMeshO>::Do(*sectionSurface, toProjectCopy, params, cb);
+            tri::IsotropicRemeshing<CMeshO>::Do(*sectionSurface, toProjectCopy, remeshParams);
         }
-        catch(vcg::MissingPreconditionException& excp)
+        catch(vcg::MissingPreconditionException& e)
         {
-            log(excp.what());
-            throw MLException(excp.what());
+            cout << e.what() << endl;
         }
         tri::UpdateSelection<CMeshO>::FaceInvert(*sectionSurface);
 
-        for(auto fi = sectionSurface->face.begin(); fi!=sectionSurface->face.end(); ++fi)
+        for(auto fi = sectionSurface->face.begin(); fi != sectionSurface->face.end(); ++fi)
         {
-            if((*fi).IsS())
+            if(fi->IsD()) continue;
+            if(fi->IsS())
             {
                 tri::Allocator<CMeshO>::DeleteFace(*sectionSurface, *fi);
             }
         }
         tri::Clean<CMeshO>::RemoveUnreferencedVertex(*sectionSurface);
-
         tri::Allocator<CMeshO>::CompactEveryVector(*sectionSurface);
-
         tri::UpdateBounding<CMeshO>::Box(*sectionSurface);
+
+
     }
 
-    //copy the selected faces of underMesh on overMesh
-    tri::Append<CMeshO, CMeshO>::Mesh(overM, underM, true);
 
-    //clear the selected faces on underMesh
-    tri::UpdateSelection<CMeshO>::VertexClear(underM);
-    tri::UpdateSelection<CMeshO>::VertexFromFaceStrict(underM);
+    tri::UpdateSelection<CMeshO>::VertexFromQualityRange(m, 0.0, std::numeric_limits<float>::max());
+    tri::UpdateSelection<CMeshO>::FaceFromVertexStrict(m);
 
-    for(auto fi = underM.face.begin(); fi!=underM.face.end(); ++fi)
-    {
-        if(!(*fi).IsD() && (*fi).IsS())
-        {
-            tri::Allocator<CMeshO>::DeleteFace(underM, *fi);
-        }
-    }
+    tri::Append<CMeshO, CMeshO>::Mesh(*underMesh, m, true);
+    tri::UpdateSelection<CMeshO>::FaceInvert(m);
+    tri::Append<CMeshO, CMeshO>::Mesh(*overMesh, m, true);
 
-    for(auto vi = underM.vert.begin(); vi != underM.vert.end(); ++vi)
-    {
-        if(!(*vi).IsD() && (*vi).IsS())
-        {
-            tri::Allocator<CMeshO>::DeleteVertex(underM, *vi);
-        }
-    }
+    FillMesh(*overMesh, *underMesh, *sectionSurface, m.bbox.Center());
 
-    for(auto vii = overM.vert.begin(); vii != overM.vert.end(); ++vii)
-    {
-        if((*vii).IsD())
-        {
-            vcg::tri::Allocator<CMeshO>::DeleteVertex(overM,*vii);
-        }
-    }
-
-    vcg::tri::Clean<CMeshO>::RemoveUnreferencedVertex(overM);
-    tri::UpdateBounding<CMeshO>::Box(underM);
-    if(underM.fn >0)
-    {
-        tri::UpdateNormal<CMeshO>::PerFaceNormalized(underM);
-        tri::UpdateNormal<CMeshO>::PerVertexAngleWeighted(underM);
-    }
-
-    tri::UpdateBounding<CMeshO>::Box(overM);
-     if(overM.fn >0)
-    {
-        tri::UpdateNormal<CMeshO>::PerFaceNormalized(overM);
-        tri::UpdateNormal<CMeshO>::PerVertexAngleWeighted(overM);
-    }
-
-    FillMesh(*underFM, *sectionSurface, underM);
-    FillMesh(*overFM, *sectionSurface, overM, true);
-
-    tri::UpdateBounding<CMeshO>::Box(*underFM);
-    tri::UpdateNormal<CMeshO>::PerFaceNormalized(*underFM);
-
-    tri::UpdateBounding<CMeshO>::Box(*overFM);
-    tri::UpdateNormal<CMeshO>::PerFaceNormalized(*overFM);
-
-    tri::UpdateSelection<CMeshO>::Clear(underM);
-    tri::UpdateSelection<CMeshO>::Clear(*underFM);
+    tri::UpdateSelection<CMeshO>::Clear(*underMesh);
+    tri::UpdateSelection<CMeshO>::Clear(*overMesh);
     tri::UpdateSelection<CMeshO>::Clear(*sectionSurface);
-    tri::UpdateSelection<CMeshO>::Clear(overM);
-    tri::UpdateSelection<CMeshO>::Clear(*overFM);
 
-    std::set<std::pair<CMeshO *, const char *>> retValues;
 
 
     if(par.getBool("createSectionSurface"))
     {
-        // making up new layer name
         const char * sectionName = "_section_surface";
+        tri::UpdateColor<CMeshO>::PerVertexQualityRamp(*sectionSurface);
         retValues.insert(std::make_pair(sectionSurface, sectionName));
     }
 
     if(par.getBool("createUnderMesh"))
     {
-        // making up new layer name
         const char * underMName = "_under_part";
-        retValues.insert(std::make_pair(underFM, underMName));
+        retValues.insert(std::make_pair(underMesh, underMName));
     }
 
     if(par.getBool("createOverMesh"))
     {
-        // making up new layer name
         const char * overMName = "_over_part";
-        retValues.insert(std::make_pair(overFM, overMName));
+        retValues.insert(std::make_pair(overMesh, overMName));
     }
-
-    for(auto mm : retValues)
-    {
-
-        cout << "Sliced " << mm.second << " vertices: " << mm.first->VN() << endl;
-        cout << "Sliced " << mm.second << " faces: " << mm.first->FN() << endl;
-
-    }
-
     return retValues;
 }
 
 
-/**
-* @brief The Real Core Function doing the actual mesh processing.
-* @param action
-* @param md: an object containing all the meshes and rasters of MeshLab
-* @param par: the set of parameters of each filter
-* @param cb: callback object to tell MeshLab the percentage of execution of the filter
-* @return true if the filter has been applied correctly, false otherwise
-*/
 std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QAction * filter, const RichParameterList & par, MeshDocument &md, unsigned int& /*postConditionMask*/, vcg::CallBackPos *cb)
 {
     std::map<std::string, QVariant> outputValues;
-    //CALCULATE THE PLANE USING THE SELECTED LAYER
-    MeshModel & m = *md.mm();
-    Box3m bbox=m.cm.bbox;
-    // the mesh has to return to its original position
-    if (m.cm.Tr != Matrix44m::Identity())
-        tri::UpdatePosition<CMeshO>::Matrix(m.cm, Inverse(m.cm.Tr), true);
 
-    // the mesh has to be correctly transformed
+    MeshModel & m = *md.mm();
+
     if (m.cm.Tr != Matrix44m::Identity())
         tri::UpdatePosition<CMeshO>::Matrix(m.cm, m.cm.Tr, true);
 
     SetMeshRequirements(m);
 
-    Point3m planeAxis(0,0,0);
+    Box3m bbox=m.cm.bbox;
+
+    Point3m planeNormal(0,0,0);
     Scalarm planeOffset;
     Point3m planeCenter;
-    Plane3m slicingPlane;
     int ind;
 
     ind = par.getEnum("planeAxis");
     if(ind>=0 && ind<3)
-        planeAxis[ind] = 1.0f;
+        planeNormal[ind] = 1.0f;
     else
-        planeAxis=par.getPoint3m("customAxis");
+        planeNormal=par.getPoint3m("customAxis");
 
-    planeAxis.Normalize();
+    planeNormal.Normalize();
+
     planeOffset = par.getFloat("planeOffset");
 
     switch(RefPlane(par.getEnum("relativeTo")))
     {
-        case REF_CENTER:  planeCenter = bbox.Center()+ planeAxis*planeOffset*(bbox.Diag()/2.0);      break;
-        case REF_MIN:     planeCenter = bbox.min+planeAxis*planeOffset*(bbox.Diag()/2.0);    break;
-        case REF_ORIG:    planeCenter = planeAxis*planeOffset;  break;
+        case REF_CENTER:
+            planeCenter = bbox.Center()+ planeNormal*planeOffset;
+            break;
+        case REF_MIN:
+            planeCenter = bbox.min + planeNormal*planeOffset;
+            break;
+        case REF_ORIG:
+        planeCenter = planeNormal*planeOffset;
+        break;
     }
-    slicingPlane.Init(planeCenter,planeAxis);
-
     bool applyToAllVisibleLayers = par.getBool("allLayers");
     int cnt=0;
 
@@ -503,7 +386,7 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
 
     if(!applyToAllVisibleLayers)
     {
-        newMeshes = SliceMesh(m, slicingPlane, par, cb, remesh);
+        newMeshes = SliceMesh(m, planeNormal, planeCenter, par, cb, remesh);
     }
     else
     {
@@ -511,7 +394,7 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
         {
             if(mmp->isVisible())
             {
-                std::set<std::pair<CMeshO *, const char *>> ret = SliceMesh(*mmp, slicingPlane, par, cb, remesh);
+                std::set<std::pair<CMeshO *, const char *>> ret = SliceMesh(*mmp, planeNormal, planeCenter, par, cb, remesh);
                 newMeshes.insert(ret.begin(), ret.end());
             }
         }
@@ -524,26 +407,11 @@ std::map<std::string, QVariant> FilterCutAndFillPlugin::applyFilter(const QActio
             QString name = QFileInfo(m.shortName()).baseName() + mm.second;
             MeshModel * mM = md.addNewMesh("", name);
             mM->cm = *mm.first;
-
-            cout << "created mesh " << mM->shortName().toStdString() << ". VN=" << mM->cm.VN() << "; FN=" << mM->cm.FN() << endl;
+            mM->updateBoxAndNormals();
         }
     }
 
     return std::map<std::string, QVariant>();
-}
-
- /**
- * @brief FilterSamplePlugin::postCondition
- * @return
- */
-int FilterCutAndFillPlugin::postCondition(const QAction *filter) const
-{
-    switch(ID(filter))
-    {
-    case FP_CUT_AND_FILL: 	return MeshModel::MM_VERTCOORD | MeshModel::MM_FACENORMAL | MeshModel::MM_VERTNORMAL;
-    }
-
-	return MeshModel::MM_VERTCOORD | MeshModel::MM_FACENORMAL | MeshModel::MM_VERTNORMAL;
 }
 
 

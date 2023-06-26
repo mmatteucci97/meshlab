@@ -52,9 +52,8 @@ float FilterCutAndFillPlugin::DetermineAverageEdgeLength(const MeshModel &mesh)
     return averageEdgeLength;
 }
 
-/*
- * todo: check only the vertices and the faces marked with quality=0 after determining the items that will be cut
- * check if they are non manifold and if they are of border
+/**
+ *
 */
 void CheckMeshRequirement(CMeshO m)
 {
@@ -72,18 +71,12 @@ void CheckMeshRequirement(CMeshO m)
             {
                 if(face::IsBorder(*fi, i))
                 {
-                    cout << "index of the face on the border:" << fi->Index() << endl;
-                    fi->SetS();
-                    cout << "Mesh ha a border on the plane, cannot apply filter" << endl;
-                    throw MLException("Cannot apply filter");
+                    throw MLException("Cannot apply filter. Mesh has a border on the plane to slice");
                 }
 
                 else if(!face::IsManifold(*fi, i))
                 {
-                    cout << "index of the face non manifold:" << fi->Index() << endl;
-                    fi->SetS();
-                    cout << "Mesh is not two manifold on the plane, cannot apply filter" << endl;
-                    throw MLException("Cannot apply filter");
+                    throw MLException("Cannot apply filter. Mesh is not manifold on the plane to slice");
                 }
             }
         }
@@ -97,29 +90,23 @@ void UpdateMesh(CMeshO &m)
     tri::UpdateNormal<CMeshO>::PerVertexNormalized(m);
     tri::UpdateTopology<CMeshO>::FaceFace(m);
     tri::UpdateTopology<CMeshO>::VertexFace(m);
+    tri::Clean<CMeshO>::RemoveDuplicateVertex(m);
     tri::UpdateBounding<CMeshO>::Box(m);
 }
 
 void SetMeshRequirements(CMeshO &m)
 {
-    tri::UpdateBounding<CMeshO>::Box(m);
-    tri::UpdateNormal<CMeshO>::PerVertexNormalized(m);
-
+    m.vert.EnableNormal();
     m.vert.EnableVFAdjacency();
-    m.face.EnableVFAdjacency();
-    tri::UpdateTopology<CMeshO>::VertexFace(m);
-
-    m.face.EnableFFAdjacency();
-    tri::UpdateTopology<CMeshO>::FaceFace(m);
-
-    m.face.EnableQuality();
+    m.vert.EnableNormal();
+    m.vert.EnableMark();
     m.vert.EnableQuality();
 
+    m.face.EnableNormal();
+    m.face.EnableVFAdjacency();
+    m.face.EnableFFAdjacency();
+    m.face.EnableQuality();
     m.face.EnableMark();
-    m.vert.EnableMark();
-
-    m.vert.EnableNormal();
-    m.face.EnableWedgeTexCoord();
 }
 
 void SetMeshRequirements(MeshModel &m)
@@ -135,6 +122,7 @@ void SetMeshRequirements(MeshModel &m)
                 MeshModel::MM_FACEMARK |
                 MeshModel::MM_VERTMARK |
                 MeshModel::MM_VERTNORMAL |
+                MeshModel::MM_VERTCOLOR |
                 MeshModel::MM_WEDGTEXCOORD |
                 MeshModel::MM_FACENUMBER |
                 MeshModel::MM_GEOMETRY_AND_TOPOLOGY_CHANGE
@@ -144,21 +132,18 @@ void SetMeshRequirements(MeshModel &m)
 
 static void CreateSection(CMeshO &section, CMeshO &m)
 {
-    // Add in section all vertices with Q==0
     int newVertices=0;
     int newEdges=0;
     for(auto vi=m.vert.begin(); vi!=m.vert.end(); ++vi)
     {
         if((*vi).Q() == 0)
         {
-
             CMeshO::VertexType newV = *tri::Allocator<CMeshO>::AddVertices(section, 1);
             newV = *vi;
             newVertices++;
         }
     }
 
-    // Add in section all edges composed by 2 vertices with Q==0
     std::set<std::pair<CMeshO::VertexType *, CMeshO::VertexType *> > addedEdges;
 
     for(auto fi = m.face.begin(); fi!=m.face.end(); ++fi)
@@ -184,33 +169,30 @@ static void CreateSection(CMeshO &section, CMeshO &m)
             }
         }
     }
+    tri::UpdateNormal<CMeshO>::PerVertex(section);
 }
 
-static void FillMesh(CMeshO &outputMesh, CMeshO &section, CMeshO &inputMesh, bool flipSection=false)
+static void FillMesh(CMeshO &overMesh, CMeshO &underMesh, CMeshO &section, Point3m planeCenter)
 {
-    CMeshO sectionCopy;
-    tri::Append<CMeshO, CMeshO>::Mesh(sectionCopy, section);
+    tri::Append<CMeshO, CMeshO>::Mesh(overMesh, section);
+    tri::Clean<CMeshO>::FlipMesh(section);
+    tri::Append<CMeshO, CMeshO>::Mesh(underMesh, section);
 
-    if(flipSection)
-    {
-        tri::Clean<CMeshO>::FlipMesh(sectionCopy);
-    }
+    tri::Clean<CMeshO>::RemoveDuplicateVertex(overMesh);
+    tri::Clean<CMeshO>::RemoveDuplicateVertex(overMesh);
 
-    tri::Append<CMeshO, CMeshO>::Mesh(outputMesh, sectionCopy);
-    tri::Append<CMeshO, CMeshO>::Mesh(outputMesh, inputMesh);
+    tri::Clean<CMeshO>::RemoveDuplicateFace(overMesh);
 
-    tri::Clean<CMeshO>::RemoveDuplicateVertex(outputMesh);
-    tri::Clean<CMeshO>::RemoveDuplicateVertex(outputMesh);
-    tri::Clean<CMeshO>::RemoveDuplicateFace(outputMesh);
-    UpdateMesh(outputMesh);
+    tri::Clean<CMeshO>::RemoveDuplicateVertex(underMesh);
+    tri::Clean<CMeshO>::RemoveDuplicateVertex(underMesh);
+
+    tri::Clean<CMeshO>::RemoveDuplicateFace(underMesh);
 }
 
 void BoundaryExpand(CMeshO &m)
 {
+    tri::UpdateTopology<CMeshO>::FaceFace(m);
     tri::UpdateSelection<CMeshO>::FaceAll(m);
-
-    cout << "m vertices begin: " << m.VN() << endl;
-    cout << "m faces begin: " << m.FN() << endl;
 
     std::vector<std::tuple<size_t, size_t, size_t>> newTrianglesVector;
     std::vector<Point3f> newTriangleCoordinates;
@@ -222,17 +204,12 @@ void BoundaryExpand(CMeshO &m)
         {
             if(face::IsBorder(*fi, i))
             {
-                //AGGIUNGI UNA FACCIA PER OGNI EDGE DI BOUNDARY
-
                 newTrianglesVector.emplace_back(tri::Index(m, fi->V0(i)), tri::Index(m, fi->V1(i)), m.vert.size()+ newTriangleCoordinates.size());
-
-
                 newTriangleCoordinates.push_back(fi->P0(i) + (fi->P1(i) - fi->P2(i)));
             }
         }
     }
 
-    //AGGIUNGI I TRIANGOLI A M
     for(int i=0; i<newTriangleCoordinates.size(); i++)
     {
         tri::Allocator<CMeshO>::AddVertex(m, newTriangleCoordinates[i]);
@@ -242,12 +219,5 @@ void BoundaryExpand(CMeshO &m)
     {
         tri:Allocator<CMeshO>::AddFace(m, std::get<0>(newTrianglesVector[i]), std::get<2>(newTrianglesVector[i]), std::get<1>(newTrianglesVector[i]));
     }
-
-    cout << "m vertices end: " << m.VN() << endl;
-    cout << "m faces end: " << m.FN() << endl;
 }
-
-
-
-
 #endif // CUT_AND_FILL_H
